@@ -646,7 +646,56 @@ class AtisCog(commands.Cog):
                 positions.append(label)
         return ", ".join(positions) if positions else "Aucun"
 
+    async def _atis_from_site(self, icao: str):
+        """Source unique : API site GET /api/bot/atis/{icao} (même lettre que le bandeau SkyRadar)."""
+        try:
+            from cogs.site_outbox import SITE_API_URL, SITE_API_SECRET
+        except ImportError:
+            SITE_API_URL = os.getenv("SITE_API_URL", "").rstrip("/")
+            SITE_API_SECRET = (
+                os.getenv("BOT_API_SECRET", "").strip()
+                or os.getenv("SITE_API_SECRET", "").strip()
+            )
+        if not SITE_API_URL or not SITE_API_SECRET:
+            return None
+        url = f"{SITE_API_URL}/bot/atis/{icao.upper()}"
+        headers = {
+            "Authorization": f"Bearer {SITE_API_SECRET}",
+            "User-Agent": "SkyBot/ATIS",
+        }
+        try:
+            r = await asyncio.to_thread(
+                lambda: requests.get(url, headers=headers, timeout=12)
+            )
+            if r.status_code != 200:
+                print(f"[ATIS] site {icao} HTTP {r.status_code}: {r.text[:200]}")
+                return None
+            data = r.json() or {}
+            letter = data.get("letter_name") or data.get("letter")
+            text = data.get("text")
+            if not letter or not text:
+                return None
+            # Enrichir avec ATC en ligne côté bot (pas dans l'API site)
+            atc_online = await self._positions_online_for_icao(icao)
+            if "ATC:" not in text:
+                lines = text.split("\n")
+                # insérer avant la dernière ligne (confirmez information…)
+                if lines:
+                    lines.insert(-1, f"ATC: {atc_online}")
+                    text = "\n".join(lines)
+            return text, letter
+        except Exception as e:
+            print(f"[ATIS] site {icao}: {e}")
+            return None
+
     async def generate_atis(self, icao: str):
+        icao = (icao or "").upper().strip()
+        # 1) Priorité : même source que le bandeau du site
+        from_site = await self._atis_from_site(icao)
+        if from_site:
+            return from_site
+
+        # 2) Repli local si le site est injoignable
         metar = await self.get_metar(icao)
         if icao not in self.metar_history:
             self.metar_history[icao] = []
@@ -673,7 +722,7 @@ class AtisCog(commands.Cog):
         prev = self.airport_data[icao]
         letter_index = prev.get("letter_index")
         if letter_index is None:
-            # première lettre stable par ICAO
+            # première lettre stable par ICAO (identique au site Mongo atis_letters)
             letter_index = sum(ord(c) for c in (icao or "").upper()) % 26
             prev["letter_index"] = letter_index
             prev["weather_sig"] = sig
