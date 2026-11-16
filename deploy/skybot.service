@@ -1,0 +1,18 @@
+# /etc/systemd/system/skybot.service   (adapter User et chemins)
+[Unit]
+Description=SkyBot (Discord SkyCommunity)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=skycommunity
+WorkingDirectory=/srv/skycommunity/SkyBot
+ExecStart=/srv/skycommunity/SkyBot/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+# Le .env est lu par python-dotenv depuis WorkingDirectory
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
